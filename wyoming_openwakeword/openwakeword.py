@@ -4,7 +4,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, TextIO
 
 import numpy as np
-import tflite_runtime.interpreter as tflite
+
+try:
+    import tflite_runtime.interpreter as tflite
+except ModuleNotFoundError:
+    import tensorflow.lite as tflite
 from wyoming.wake import Detection
 
 from .const import (
@@ -265,9 +269,15 @@ def ww_proc(
                 with state.clients_lock, ww_state.embeddings_lock:
                     for client_id, client in state.clients.items():
                         client_data = client.wake_words[ww_model_key]
+
+                        if client_data.ww_windows is None:
+                            # Number of feature windows needed for this model
+                            client_data.ww_windows = ww_windows
+
                         if client_data.new_embeddings < ww_windows:
                             continue
 
+                        client_data.is_processing = True
                         embeddings_tensor = np.zeros(
                             shape=(1, ww_windows, WW_FEATURES),
                             dtype=np.float32,
@@ -376,6 +386,8 @@ def ww_proc(
                     # Run outside lock just to be safe
                     for coro in coros:
                         asyncio.run_coroutine_threadsafe(coro, loop)
+
+                    client_data.is_processing = False
 
     except Exception:
         _LOGGER.exception("Unexpected error in wake word thread (%s)", ww_model_key)

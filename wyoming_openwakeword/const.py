@@ -38,16 +38,19 @@ class WakeWordData:
         )
     )
     embeddings_timestamp: int = 0
+    ww_windows: Optional[int] = None
     is_detected: bool = False
     activations: int = 0
     threshold: float = 0.5
     trigger_level: int = 1
+    is_processing: bool = False
 
     def reset(self) -> None:
         self.new_embeddings = 0
         self.embeddings.fill(0)
         self.is_detected = False
         self.activations = 0
+        self.is_processing = False
 
 
 @dataclass
@@ -68,7 +71,7 @@ class ClientData:
 
     def reset(self) -> None:
         self.audio.fill(0)
-        self.new_audio_samples = 0
+        self.new_audio_samples = _AUTOFILL_SECONDS * _SAMPLE_RATE
         self.mels.fill(0)
         self.new_mels = 0
         for ww_data in self.wake_words.values():

@@ -16,7 +16,8 @@ from wyoming.info import Attribution, Describe, Info, WakeModel, WakeProgram
 from wyoming.server import AsyncEventHandler
 from wyoming.wake import Detect, NotDetected
 
-from .const import ClientData, WakeWordData
+from . import __version__
+from .const import EMB_FEATURES, MEL_SAMPLES, ClientData, WakeWordData
 from .openwakeword import ww_proc
 from .state import State, WakeWordState
 
@@ -127,7 +128,23 @@ class OpenWakeWordEventHandler(AsyncEventHandler):
             # Signal mels thread that audio is ready to process
             self.state.audio_ready.release()
         elif AudioStop.is_type(event.type):
-            # Inform client if not detections occurred
+            # Inform client if no detections occurred
+            while True:
+                if (
+                    (self.data.new_audio_samples < MEL_SAMPLES)
+                    and (self.data.new_mels < EMB_FEATURES)
+                    and all(
+                        (ww_data.ww_windows is not None)
+                        and (ww_data.new_embeddings < ww_data.ww_windows)
+                        and (not ww_data.is_processing)
+                        for ww_data in self.data.wake_words.values()
+                    )
+                ):
+                    break
+
+                # Wait until no new embeddings still need to be processed
+                await asyncio.sleep(0.1)
+
             if not any(
                 ww_data.is_detected for ww_data in self.data.wake_words.values()
             ):
@@ -141,8 +158,6 @@ class OpenWakeWordEventHandler(AsyncEventHandler):
             if self.audio_writer is not None:
                 self.audio_writer.close()
                 self.audio_writer = None
-
-            return False
         else:
             _LOGGER.debug("Unexpected event: type=%s, data=%s", event.type, event.data)
 
@@ -171,17 +186,20 @@ class OpenWakeWordEventHandler(AsyncEventHandler):
                         name="dscripka", url="https://github.com/dscripka/openWakeWord"
                     ),
                     installed=True,
+                    version=__version__,
                     models=[
                         WakeModel(
                             name=model_path.stem,
                             # hey_jarvis_v0.1 => hey jarvis
                             description=_get_description(model_path.stem),
+                            phrase=_get_description(model_path.stem),
                             attribution=Attribution(
                                 name="dscripka",
                                 url="https://github.com/dscripka/openWakeWord",
                             ),
                             installed=True,
                             languages=[],
+                            version=_get_version(model_path.stem),
                         )
                         for model_path in _get_wake_word_files(self.state)
                     ],
@@ -216,6 +234,7 @@ def ensure_loaded(state: State, names: List[str], threshold: float, trigger_leve
                     # Exclude version
                     if norm_model_name == _normalize_key(match.group(1)):
                         model_path = maybe_model_path
+                        state.wake_word_aliases[model_name] = model_path.stem
                         break
 
             if model_path is None:
@@ -274,3 +293,12 @@ def _get_description(file_name: str) -> str:
         file_name = match.group(1)
 
     return file_name.replace("_", " ")
+
+
+def _get_version(file_name: str) -> Optional[str]:
+    """Get version of a wake word from model name."""
+    if match := _WAKE_WORD_WITH_VERSION.match(file_name):
+        # Extract version
+        return match.group(2)
+
+    return None
